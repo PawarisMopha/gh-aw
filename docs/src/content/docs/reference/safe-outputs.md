@@ -201,6 +201,33 @@ Create custom post-processing jobs registered as Model Context Protocol (MCP) to
 
 Custom implementations should include a generated-by footer and workflow metadata on published content. Direct API calls do not add these automatically; without them, provenance searches and workflow-output tracking cannot identify the content. Use the [stable issue-creation API](/gh-aw/reference/custom-safe-outputs/#issue-creation-api) for GitHub issues.
 
+Do not read internal safe-output files from `post-steps`. Their paths and format are implementation details, and the compiler rejects direct reads:
+
+```yaml wrap
+post-steps:
+  - name: Read safe output
+    run: jq '.items[]' /tmp/gh-aw/safeoutputs/output.json
+```
+
+Use a built-in `safe-outputs` handler for supported operations, or move custom processing into a `safe-outputs.jobs` job. Custom jobs receive agent output through `$GH_AW_AGENT_OUTPUT`:
+
+```yaml wrap
+safe-outputs:
+  jobs:
+    process-report:
+      description: "Process the generated report"
+      runs-on: ubuntu-latest
+      output: "Report processed"
+      inputs:
+        report:
+          description: "Report content"
+          required: true
+          type: string
+      steps:
+        - name: Process agent output
+          run: jq '.items[]' "$GH_AW_AGENT_OUTPUT"
+```
+
 ### GitHub Action Wrappers (`actions:`)
 
 Mount any public GitHub Action as a once-callable MCP tool. The compiler pins the action reference to a SHA at compile time and derives the tool's input schema from the action's `action.yml`. See [GitHub Action Wrappers](/gh-aw/reference/custom-safe-outputs/#github-action-wrappers-safe-outputsactions).
@@ -260,6 +287,8 @@ This integration does not support transitions, assignment, custom fields, priori
 :::
 
 Set `steer: true` to create a run-scoped issue during the activation job, before the agent starts. Users can add comments containing the keyword `steer` while the run is in progress. The injected prompt identifies the exact issue and instructs the agent to read relevant user-authored comments with the GitHub MCP `issue_read` tool.
+
+When the daily AI Credits guardrail blocks agent startup, no steering issue is created. Failure reporting uses its normal existing-issue deduplication instead.
 
 The initial issue body includes the standard generated-by footer and tracking metadata for the workflow, run, tracker ID, and available engine information. Attribution is present before the agent starts and uses the configured `messages.footer` template when provided.
 
