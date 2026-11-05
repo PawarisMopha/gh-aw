@@ -12,7 +12,7 @@ permissions:
   actions: read
   copilot-requests: write
 engine:
-  id: codex
+  id: copilot
   model-provider: github
 model: copilot/gpt-6-sol
 strict: true
