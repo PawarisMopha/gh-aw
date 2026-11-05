@@ -40,6 +40,8 @@ name: Agentic Maintenance
 on:
   schedule:
     - cron: "37 */2 * * *"  # Every 2 hours (based on minimum expires: 1 days)
+  issues:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       operation:
@@ -737,6 +739,110 @@ jobs:
             const { setupGlobals } = require(path.join(actionsDir, 'setup_globals.cjs'));
             setupGlobals(core, github, context, exec, io, getOctokit);
             const { main } = require(path.join(actionsDir, 'run_validate_workflows.cjs'));
+            await main();
+
+  label_disable_agentic_workflow:
+    name: Disable agentic workflow by label
+    if: ${{ (!(github.event.repository.fork)) && github.event_name == 'issues' && github.event.label.name == 'agentic-workflows:disable' }}
+    runs-on: ubuntu-slim
+    # Label requests disable workflow runs and update the requesting issue.
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout actions folder
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            actions
+          clean: false
+          persist-credentials: false
+
+      - name: Setup Scripts
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+
+      - name: Check admin/maintainer permissions
+        id: check_permissions
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { setupGlobals } = require(path.join(actionsDir, 'setup_globals.cjs'));
+            setupGlobals(core, github, context, exec, io, getOctokit);
+            const { main } = require(path.join(actionsDir, 'check_team_member.cjs'));
+            await main();
+
+      - name: Disable agentic workflow
+        if: ${{ steps.check_permissions.outcome == 'success' }}
+        uses: 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3' # v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { setupGlobals } = require(path.join(actionsDir, 'setup_globals.cjs'));
+            setupGlobals(core, github, context, exec, io, getOctokit);
+            const { main } = require(path.join(actionsDir, 'disable_agentic_workflow.cjs'));
+            await main();
+
+  label_apply_safe_outputs:
+    name: Apply safe outputs by label
+    if: ${{ (!(github.event.repository.fork)) && github.event_name == 'issues' && github.event.label.name == 'agentic-workflows:apply-safe-outputs' }}
+    runs-on: ubuntu-slim
+    # Applying safe outputs can update each supported repository resource.
+    permissions:
+      actions: read
+      contents: write
+      discussions: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout actions folder
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            actions
+          clean: false
+          persist-credentials: false
+
+      - name: Setup Scripts
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+
+      - name: Check admin/maintainer permissions
+        id: check_permissions
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { setupGlobals } = require(path.join(actionsDir, 'setup_globals.cjs'));
+            setupGlobals(core, github, context, exec, io, getOctokit);
+            const { main } = require(path.join(actionsDir, 'check_team_member.cjs'));
+            await main();
+
+      - name: Apply safe outputs from referenced run
+        if: ${{ steps.check_permissions.outcome == 'success' }}
+        uses: 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3' # v9.0.0
+        env:
+          GH_AW_JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
+          GH_AW_WORKFLOW_ID: "agentics-maintenance"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { setupGlobals } = require(path.join(actionsDir, 'setup_globals.cjs'));
+            setupGlobals(core, github, context, exec, io, getOctokit);
+            const { main } = require(path.join(actionsDir, 'label_apply_safe_outputs.cjs'));
             await main();
 
   ledger_compaction_plan:
