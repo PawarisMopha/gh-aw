@@ -11,6 +11,7 @@ import (
 
 	"github.com/github/gh-aw/pkg/constants"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUsageActivityGenerationIncludesJobResults(t *testing.T) {
@@ -288,6 +289,34 @@ func TestConclusionJobRunsForSkillInstallFailures(t *testing.T) {
 		!strings.Contains(condition, "needs.activation.outputs.skill_install_failure_count != '0'") {
 		t.Errorf("Expected conclusion condition to include skill installation failures, got: %q", condition)
 	}
+}
+
+func TestConclusionJobRunsForActivationFailuresButNotSkippedActivation(t *testing.T) {
+	compiler := NewCompiler()
+	data := &WorkflowData{SafeOutputs: &SafeOutputsConfig{}}
+
+	job, err := compiler.buildConclusionJob(data, string(constants.AgentJobName), nil)
+	require.NoError(t, err)
+	assert.Contains(t, job.If, "needs.activation.result == 'failure'")
+	assert.NotContains(t, job.If, "needs.activation.result != 'skipped'")
+
+	condition := RenderCondition(compiler.buildConclusionJobCondition(data, string(constants.AgentJobName), nil))
+	assert.Contains(t, condition, "needs.agent.result != 'skipped' ||")
+	assert.Contains(t, condition, "needs.activation.result == 'failure'")
+}
+
+func TestConclusionHandlerReceivesActivationResult(t *testing.T) {
+	compiler := NewCompiler()
+	data := &WorkflowData{
+		SafeOutputs: &SafeOutputsConfig{
+			NoOp: &NoOpConfig{},
+		},
+	}
+
+	expected := "GH_AW_ACTIVATION_RESULT: ${{ needs.activation.result }}"
+	coreVars, _, err := compiler.buildAgentFailureCoreVars(data, string(constants.AgentJobName))
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(coreVars, ""), expected)
 }
 
 func TestDefaultCheckoutUsesTriggerRef(t *testing.T) {
@@ -2032,7 +2061,7 @@ func TestConclusionJobIssuesWritePermissionDerivedFromConfig(t *testing.T) {
 		assert.NotContains(t, strings.Join(job.Steps, ""), "GH_AW_JOB_DURATIONS:")
 	})
 
-	t.Run("no issues: write when default threat detection is enabled but issue-writing paths are disabled", func(t *testing.T) {
+	t.Run("no issues: write when threat detection is enabled but issue reporting is disabled", func(t *testing.T) {
 		compiler := NewCompiler()
 		falseReportFailedJobs := TemplatableBool("false")
 		workflowData := &WorkflowData{
@@ -2044,7 +2073,7 @@ func TestConclusionJobIssuesWritePermissionDerivedFromConfig(t *testing.T) {
 				MissingTool: &MissingToolConfig{
 					CreateIssue: &falseVal,
 				},
-				ThreatDetection: &ThreatDetectionConfig{},
+				ThreatDetection: &ThreatDetectionConfig{ReportAsIssue: new(false)},
 			},
 		}
 		job, err := compiler.buildConclusionJob(workflowData, string(constants.AgentJobName), []string{})
@@ -2145,6 +2174,8 @@ func TestConclusionGitHubAppTokenUsesConclusionPermissions(t *testing.T) {
 		name                 string
 		reportFailedJobs     *TemplatableBool
 		reportFailureAsIssue *TemplatableBool
+		threatDetection      *ThreatDetectionConfig
+		worker               bool
 		wantIssuesWrite      bool
 	}{
 		{
@@ -2156,6 +2187,41 @@ func TestConclusionGitHubAppTokenUsesConclusionPermissions(t *testing.T) {
 			reportFailedJobs:     templatableBoolPtr("false"),
 			reportFailureAsIssue: templatableBoolPtr("false"),
 		},
+		{
+			name:                 "detection reporting only",
+			reportFailedJobs:     templatableBoolPtr("false"),
+			reportFailureAsIssue: templatableBoolPtr("false"),
+			threatDetection:      &ThreatDetectionConfig{},
+			wantIssuesWrite:      true,
+		},
+		{
+			name:                 "detection issue reporting disabled",
+			reportFailedJobs:     templatableBoolPtr("false"),
+			reportFailureAsIssue: templatableBoolPtr("false"),
+			threatDetection:      &ThreatDetectionConfig{ReportAsIssue: new(false)},
+		},
+		{
+			name:                 "detection not runnable",
+			reportFailedJobs:     templatableBoolPtr("false"),
+			reportFailureAsIssue: templatableBoolPtr("false"),
+			threatDetection:      &ThreatDetectionConfig{EngineDisabled: true},
+		},
+		{
+			name:            "worker detection reporting",
+			worker:          true,
+			threatDetection: &ThreatDetectionConfig{},
+			wantIssuesWrite: true,
+		},
+		{
+			name:            "worker detection issue reporting disabled",
+			worker:          true,
+			threatDetection: &ThreatDetectionConfig{ReportAsIssue: new(false)},
+		},
+		{
+			name:            "worker detection not runnable",
+			worker:          true,
+			threatDetection: &ThreatDetectionConfig{EngineDisabled: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2166,11 +2232,15 @@ func TestConclusionGitHubAppTokenUsesConclusionPermissions(t *testing.T) {
 					CreatePullRequestReviewComments: &CreatePullRequestReviewCommentsConfig{},
 					ReportFailedJobs:                tt.reportFailedJobs,
 					ReportFailureAsIssue:            tt.reportFailureAsIssue,
+					ThreatDetection:                 tt.threatDetection,
 					GitHubApp: &GitHubAppConfig{
 						AppID:      "${{ vars.APP_ID }}",
 						PrivateKey: "${{ secrets.APP_PRIVATE_KEY }}",
 					},
 				},
+			}
+			if tt.worker {
+				workflowData.Tools = map[string]any{"work-queue": map[string]any{"worker": true}}
 			}
 
 			job, err := NewCompiler().buildConclusionJob(workflowData, string(constants.AgentJobName), nil)
@@ -2182,6 +2252,12 @@ func TestConclusionGitHubAppTokenUsesConclusionPermissions(t *testing.T) {
 			}
 
 			steps := strings.Join(job.Steps, "")
+			assert.Equal(t, tt.wantIssuesWrite, strings.Contains(job.Permissions, "issues: write"))
+			_, safeOutputIssues := ComputePermissionsForSafeOutputs(workflowData.SafeOutputs).Get(PermissionIssues)
+			assert.False(t, safeOutputIssues, "conclusion reports must not broaden safe-output execution permissions")
+			if tt.threatDetection != nil {
+				assert.Equal(t, tt.wantIssuesWrite, strings.Contains(steps, "id: detection_runs"))
+			}
 			if !strings.Contains(steps, "permission-actions: read") {
 				t.Errorf("conclusion App token should include 'permission-actions: read', got:\n%s", steps)
 			}

@@ -796,12 +796,14 @@ on:
     # Filter fork pull requests by repository pattern (string or list). Omission and
     # an empty list both allow only same-repository PRs. Exact owner/repo entries or
     # trusted owner/* patterns admit matching forks; '*' allows all forks. Strict mode
-    # warns on any '*' entry and recommends narrower admission, but compilation
-    # continues. Strict mode rejects expressions and unsupported pattern forms.
-    # Same-repository PRs remain allowed. Actor authorization and checkout
-    # restrictions remain mandatory in strict mode; acknowledge-risk neither bypasses
-    # them nor suppresses the fork warning. This does not change GitHub's
-    # base-repository permissions or secret availability for pull_request_target.
+    # rejects any '*' entry unless the main workflow's top-level
+    # features.dangerously-allow-pull-request-target-forks-all is true; imported
+    # features do not enable this opt-in. Non-strict mode warns, and the warning
+    # remains when the flag is enabled. Strict mode rejects expressions and
+    # unsupported pattern forms. Same-repository PRs remain allowed. Actor
+    # authorization and checkout restrictions remain mandatory; acknowledge-risk
+    # neither bypasses them nor suppresses the fork warning. This does not change
+    # GitHub's base-repository permissions or secret availability for pull_request_target.
     # (optional)
     # Accepted formats:
 
@@ -1979,6 +1981,12 @@ features:
   # on.roles containing read or all. Strict mode still rejects this configuration.
   # (optional)
   dangerously-allow-roles-read-and-pull-request-target: true
+
+  # Allow forks: '*' under pull_request_target in strict mode when declared in
+  # the main workflow's top-level features. Imported features do not enable this
+  # opt-in. The unrestricted fork admission warning remains visible.
+  # (optional)
+  dangerously-allow-pull-request-target-forks-all: true
 
 # Model policy, optional pricing configuration, and workflow-defined model
 # aliases. The policy fields (allowed/blocked) are experimental and merged as
@@ -22767,7 +22775,7 @@ safe-outputs:
   # those categories trigger issues. If only prefixed (excluded) categories are
   # specified, all categories except those trigger issues. If both are specified,
   # categories must match included AND not match excluded. Common categories:
-  # agent_failure, timed_out, transport_wedge, missing_safe_outputs,
+  # agent_failure, activation_failed, timed_out, transport_wedge, missing_safe_outputs,
   # report_incomplete, missing_tool, missing_data, inference_access_error,
   # model_endpoint_mismatch, mcp_policy_error, ai_credits_rate_limit_error,
   # max_ai_credits_exceeded, daily_ai_credits_unknown.

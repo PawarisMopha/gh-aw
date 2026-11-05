@@ -497,7 +497,7 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
 		description string
 	}{
 		{
-			name: "safe - heredoc with EOF delimiter",
+			name: "unsafe - expression in quoted heredoc",
 			yaml: `jobs:
   test:
     steps:
@@ -506,11 +506,11 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
           cat > config.json << 'EOF'
           {"issue": "${{ github.event.issue.number }}"}
           EOF`,
-			shouldError: false,
-			description: "Expressions in heredocs are safe - written to files, not executed",
+			shouldError: true,
+			description: "Actions expressions are substituted before the shell processes quoted heredocs",
 		},
 		{
-			name: "safe - heredoc with JSON delimiter",
+			name: "unsafe - expression in quoted JSON heredoc",
 			yaml: `jobs:
   test:
     steps:
@@ -519,11 +519,11 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
           cat > data.json << 'JSON'
           {"title": "${{ github.event.issue.title }}"}
           JSON`,
-			shouldError: false,
-			description: "JSON heredoc delimiter should be recognized",
+			shouldError: true,
+			description: "Expressions in quoted heredocs must be detected",
 		},
 		{
-			name: "safe - heredoc with YAML delimiter",
+			name: "unsafe - expression in quoted YAML heredoc",
 			yaml: `jobs:
   test:
     steps:
@@ -532,8 +532,8 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
           cat > config.yaml << 'YAML'
           title: ${{ github.event.issue.title }}
           YAML`,
-			shouldError: false,
-			description: "YAML heredoc delimiter should be recognized",
+			shouldError: true,
+			description: "Expressions in quoted heredocs must be detected",
 		},
 		{
 			name: "unsafe - expression outside heredoc",
@@ -550,7 +550,7 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
 			description: "Expressions outside heredoc should still be detected",
 		},
 		{
-			name: "safe - multiple heredocs in same run block",
+			name: "unsafe - expressions in multiple quoted heredocs",
 			yaml: `jobs:
   test:
     steps:
@@ -562,8 +562,8 @@ func TestTemplateInjectionHeredocFiltering(t *testing.T) {
           cat > config2.json << 'EOF'
           {"title": "${{ github.event.issue.title }}"}
           EOF`,
-			shouldError: false,
-			description: "Multiple heredocs should all be filtered",
+			shouldError: true,
+			description: "Expressions in all heredocs must be detected",
 		},
 		{
 			name: "unsafe - unquoted heredoc delimiter",
@@ -742,150 +742,6 @@ func TestTemplateInjectionEdgeCases(t *testing.T) {
 				require.Error(t, err, tt.description)
 			} else {
 				assert.NoError(t, err, tt.description)
-			}
-		})
-	}
-}
-
-func TestRemoveHeredocContent(t *testing.T) {
-	tests := []struct {
-		name     string
-		content  string
-		want     string
-		hasExpr  bool
-		describe string
-	}{
-		{
-			name: "simple EOF heredoc",
-			content: `cat > file << 'EOF'
-{"value": "${{ github.event.issue.number }}"}
-EOF
-echo "done"`,
-			want:     "cat > file # heredoc removed\necho \"done\"",
-			hasExpr:  false,
-			describe: "EOF heredoc should be removed",
-		},
-		{
-			name: "unquoted EOF heredoc",
-			content: `cat > file << EOF
-{"value": "${{ github.event.issue.number }}"}
-EOF`,
-			want:     "cat > file # heredoc removed",
-			hasExpr:  true,
-			describe: "Unquoted EOF heredoc must remain visible",
-		},
-		{
-			name: "JSON delimiter",
-			content: `cat > file.json << 'JSON'
-{"title": "${{ github.event.issue.title }}"}
-JSON`,
-			want:     "cat > file.json # heredoc removed",
-			hasExpr:  false,
-			describe: "JSON delimiter heredoc should be removed",
-		},
-		{
-			name: "expression outside heredoc",
-			content: `cat > file << 'EOF'
-{"safe": "value"}
-EOF
-echo "${{ github.event.issue.title }}"`,
-			want:     "cat > file # heredoc removed\necho \"${{ github.event.issue.title }}\"",
-			hasExpr:  true,
-			describe: "Expressions outside heredoc should remain",
-		},
-		{
-			name: "multiple heredocs",
-			content: `cat > file1 << 'EOF'
-{"a": "${{ github.event.issue.number }}"}
-EOF
-cat > file2 << 'EOF'
-{"b": "${{ github.event.issue.title }}"}
-EOF`,
-			want:     "cat > file1 # heredoc removed\ncat > file2 # heredoc removed",
-			hasExpr:  false,
-			describe: "Multiple heredocs should all be removed",
-		},
-		{
-			name:     "no heredoc",
-			content:  `echo "${{ github.event.issue.title }}"`,
-			want:     `echo "${{ github.event.issue.title }}"`,
-			hasExpr:  true,
-			describe: "Content without heredoc should be unchanged",
-		},
-		{
-			name: "heredoc with indentation",
-			content: `          cat > file << 'EOF'
-          {"value": "${{ github.event.issue.number }}"}
-          EOF`,
-			want:     "          cat > file # heredoc removed",
-			hasExpr:  true,
-			describe: "Space-indented closing delimiter does not terminate a Bash heredoc",
-		},
-		{
-			name: "prefixed EOF delimiter - safe outputs config",
-			content: `cat > /tmp/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-{"target": "${{ github.event.issue.number }}"}
-GH_AW_SAFE_OUTPUTS_CONFIG_EOF
-echo "done"`,
-			want:     "cat > /tmp/config.json # heredoc removed\necho \"done\"",
-			hasExpr:  false,
-			describe: "Prefixed EOF delimiter (GH_AW_SAFE_OUTPUTS_CONFIG_EOF) should be removed",
-		},
-		{
-			name: "prefixed JSON delimiter",
-			content: `cat > /tmp/config.json << 'GH_AW_CONFIG_JSON'
-{"handlers": {"update_issue": {"target": "${{ github.event.issue.number }}"}}}
-GH_AW_CONFIG_JSON`,
-			want:     "cat > /tmp/config.json # heredoc removed",
-			hasExpr:  false,
-			describe: "Prefixed JSON delimiter should be removed",
-		},
-		{
-			name: "prefixed YAML delimiter",
-			content: `cat > /tmp/workflow.yml << 'GH_AW_WORKFLOW_YAML'
-env:
-  TARGET: ${{ github.event.issue.number }}
-GH_AW_WORKFLOW_YAML`,
-			want:     "cat > /tmp/workflow.yml # heredoc removed",
-			hasExpr:  false,
-			describe: "Prefixed YAML delimiter should be removed",
-		},
-		{
-			name: "unquoted prefixed delimiter",
-			content: `cat > file << GH_AW_TOOLS_EOF
-{"value": "${{ github.event.issue.number }}"}
-GH_AW_TOOLS_EOF`,
-			want:     "cat > file # heredoc removed",
-			hasExpr:  true,
-			describe: "Unquoted prefixed delimiter must remain visible",
-		},
-		{
-			name: "multiple prefixed delimiters",
-			content: `cat > file1 << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-{"a": "${{ github.event.issue.number }}"}
-GH_AW_SAFE_OUTPUTS_CONFIG_EOF
-cat > file2 << 'GH_AW_MCP_CONFIG_EOF'
-{"b": "${{ github.event.issue.title }}"}
-GH_AW_MCP_CONFIG_EOF`,
-			want:     "cat > file1 # heredoc removed\ncat > file2 # heredoc removed",
-			hasExpr:  false,
-			describe: "Multiple prefixed delimiters should all be removed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := removeHeredocContent(tt.content)
-
-			// Check if expression is present
-			hasExpr := strings.Contains(got, "${{")
-
-			assert.Equal(t, tt.hasExpr, hasExpr,
-				"Expression presence mismatch: %s", tt.describe)
-
-			if !tt.hasExpr {
-				assert.NotContains(t, got, "${{",
-					"Should not contain expressions after heredoc removal: %s", tt.describe)
 			}
 		})
 	}
@@ -1511,8 +1367,8 @@ func TestScanRunContentExpressions(t *testing.T) {
 	}
 }
 
-// TestScanRunContentExpressionsHeredoc distinguishes literal quoted bodies from
-// expanding unquoted bodies on the raw-YAML fast path.
+// TestScanRunContentExpressionsHeredoc checks that expressions in any heredoc body
+// are detected on the raw-YAML fast path because Actions evaluates them before Bash.
 func TestScanRunContentExpressionsHeredoc(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -1586,7 +1442,7 @@ func TestScanRunContentExpressionsHeredoc(t *testing.T) {
 			wantHasDisallowed: false,
 		},
 		{
-			name: "quoted heredoc delimiter (single-quoted) skips content",
+			name: "quoted heredoc expression is detected",
 			yaml: `jobs:
   test:
     steps:
@@ -1594,8 +1450,8 @@ func TestScanRunContentExpressionsHeredoc(t *testing.T) {
           cat << 'EOF'
           literal: ${{ github.event.issue.title }}
           EOF`,
-			wantHasUnsafe:     false,
-			wantHasDisallowed: false,
+			wantHasUnsafe:     true,
+			wantHasDisallowed: true,
 		},
 	}
 

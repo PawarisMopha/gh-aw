@@ -202,6 +202,11 @@
       "description": "Optional source reference indicating where this workflow was added from. Format: owner/repo/path@ref (e.g., githubnext/agentics/workflows/ci-doctor.md@v1.0.0). Rendered as a comment in the generated lock file.",
       "examples": ["githubnext/agentics/workflows/ci-doctor.md", "githubnext/agentics/workflows/daily-perf-improver.md@1f181b37d3fe5862ab590648f25a292e345b5de6"]
     },
+    "source-sha": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{40}$",
+      "description": "Installed source commit, managed by gh aw add and update. Used as the immutable base for three-way merges while source retains the tracking ref."
+    },
     "redirect": {
       "type": "string",
       "description": "Optional workflow location redirect for updates. Format: workflow spec or GitHub URL (e.g., owner/repo/path@ref or https://github.com/owner/repo/blob/main/path.md). When present, update follows this location and rewrites source.",
@@ -2064,7 +2069,7 @@
                       }
                     }
                   ],
-                  "description": "Filter fork pull requests by repository pattern (string or list). Omission and an empty list both allow only same-repository PRs. Exact owner/repo entries or trusted owner/* patterns admit matching forks; '*' allows all forks. Strict mode warns on any '*' entry and recommends narrower admission, but compilation continues. Strict mode rejects expressions and unsupported pattern forms. Same-repository PRs remain allowed. Actor authorization and checkout restrictions remain mandatory in strict mode; acknowledge-risk neither bypasses them nor suppresses the fork warning. This does not change GitHub's base-repository permissions or secret availability for pull_request_target."
+                  "description": "Filter fork pull requests by repository pattern (string or list). Omission and an empty list both allow only same-repository PRs. Exact owner/repo entries or trusted owner/* patterns admit matching forks; '*' allows all forks. Strict mode rejects any '*' entry unless the main workflow's top-level features.dangerously-allow-pull-request-target-forks-all is true; imported features do not enable this opt-in. Non-strict mode warns. The warning remains when the flag is enabled. Strict mode rejects expressions and unsupported pattern forms. Same-repository PRs remain allowed. Actor authorization and checkout restrictions remain mandatory; acknowledge-risk neither bypasses them nor suppresses the fork warning. This does not change GitHub's base-repository permissions or secret availability for pull_request_target."
                 },
                 "acknowledge-risk": {
                   "type": "boolean",
@@ -3415,6 +3420,12 @@
           "type": "boolean",
           "default": false,
           "description": "Suppress the non-strict warning when pull_request_target is combined with on.roles containing read or all. Strict mode still rejects this configuration.",
+          "examples": [true, false]
+        },
+        "dangerously-allow-pull-request-target-forks-all": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow forks: '*' under pull_request_target in strict mode when declared in the main workflow's top-level features. Imported features do not enable this opt-in. The unrestricted fork admission warning remains visible.",
           "examples": [true, false]
         }
       },
@@ -13495,10 +13506,10 @@
             },
             {
               "type": "array",
-              "description": "List of failure categories that should trigger issue creation. Categories can be prefixed with '!' to exclude them (e.g., '!inference_access_error'). If only non-prefixed categories are specified, only those categories trigger issues. If only prefixed (excluded) categories are specified, all categories except those trigger issues. If both are specified, categories must match included AND not match excluded. Common categories: agent_failure, timed_out, transport_wedge, missing_safe_outputs, report_incomplete, missing_tool, missing_data, inference_access_error, model_endpoint_mismatch, mcp_policy_error, ai_credits_rate_limit_error, max_ai_credits_exceeded, daily_ai_credits_unknown.",
+              "description": "List of failure categories that should trigger issue creation. Categories can be prefixed with '!' to exclude them (e.g., '!inference_access_error'). If only non-prefixed categories are specified, only those categories trigger issues. If only prefixed (excluded) categories are specified, all categories except those trigger issues. If both are specified, categories must match included AND not match excluded. Common categories: agent_failure, activation_failed, timed_out, transport_wedge, missing_safe_outputs, report_incomplete, missing_tool, missing_data, inference_access_error, model_endpoint_mismatch, mcp_policy_error, ai_credits_rate_limit_error, max_ai_credits_exceeded, daily_ai_credits_unknown.",
               "items": {
                 "type": "string",
-                "pattern": "^!?(agent_failure|timed_out|transport_wedge|missing_safe_outputs|report_incomplete|agent_startup_failure|engine_driver_failure|secret_redaction_failure|safeoutputs_cli_error|invalid_safe_outputs|missing_terminal_safe_output|missing_tool|missing_data|tool_denials_exceeded|cache_miss_misconfiguration|secret_verification_failed|inference_access_error|copilot_org_billing_error|mcp_policy_error|model_not_supported_error|model_endpoint_mismatch|ai_credits_rate_limit_error|unknown_model_ai_credits|max_ai_credits_exceeded|app_token_minting_failed|lockdown_check_failed|stale_lock_file_failed|daily_ai_credits_exceeded|daily_ai_credits_unknown|assignment_errors|assign_copilot_failures|skill_install_failures|create_discussion_errors|code_push_failures|repo_memory_validation_errors|push_repo_memory_failure)$"
+                "pattern": "^!?(agent_failure|activation_failed|timed_out|transport_wedge|missing_safe_outputs|report_incomplete|agent_startup_failure|engine_driver_failure|secret_redaction_failure|safeoutputs_cli_error|invalid_safe_outputs|missing_terminal_safe_output|missing_tool|missing_data|tool_denials_exceeded|cache_miss_misconfiguration|secret_verification_failed|inference_access_error|copilot_org_billing_error|mcp_policy_error|model_not_supported_error|model_endpoint_mismatch|ai_credits_rate_limit_error|unknown_model_ai_credits|max_ai_credits_exceeded|app_token_minting_failed|lockdown_check_failed|stale_lock_file_failed|daily_ai_credits_exceeded|daily_ai_credits_unknown|assignment_errors|assign_copilot_failures|skill_install_failures|create_discussion_errors|code_push_failures|repo_memory_validation_errors|push_repo_memory_failure)$"
               },
               "minItems": 1,
               "uniqueItems": true

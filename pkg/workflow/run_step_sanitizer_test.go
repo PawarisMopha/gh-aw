@@ -150,42 +150,33 @@ EOF`,
 			expectChanged: false,
 		},
 		{
-			name: "expression in bash comment not extracted",
+			name: "expression in bash comment extracted",
 			step: map[string]any{
 				"run": strings.Join([]string{
 					`set -euo pipefail`,
-					`# docs: ${{ secrets.* }}`,
+					`# docs: ${{ github.event.issue.title }}`,
 					`echo "ok"`,
 				}, "\n"),
 			},
-			expectChanged: false,
-		},
-		{
-			name: "only non-comment expression is extracted",
-			step: map[string]any{
-				"run": strings.Join([]string{
-					`# docs: ${{ secrets.* }}`,
-					`echo "${{ github.event.issue.title }}"`,
-				}, "\n"),
-			},
 			expectChanged:   true,
-			expectRunHas:    []string{"# docs: ${{ secrets.* }}", "$GH_AW_GITHUB_EVENT_ISSUE_TITLE"},
-			expectRunNotHas: []string{"${{ github.event.issue.title }}"},
+			expectRunHas:    []string{"# docs: $GH_AW_GITHUB_EVENT_ISSUE_TITLE"},
+			expectRunNotHas: []string{"${{"},
 			expectEnvKeys:   []string{"GH_AW_GITHUB_EVENT_ISSUE_TITLE"},
 			expectWarnings:  1,
 		},
 		{
-			name: "same expression in comment remains unchanged",
+			name: "same comment and command expression is extracted once",
 			step: map[string]any{
 				"run": strings.Join([]string{
 					`# docs: ${{ github.event.issue.title }}`,
 					`echo "${{ github.event.issue.title }}"`,
 				}, "\n"),
 			},
-			expectChanged:  true,
-			expectRunHas:   []string{"# docs: ${{ github.event.issue.title }}", `echo "$GH_AW_GITHUB_EVENT_ISSUE_TITLE"`},
-			expectEnvKeys:  []string{"GH_AW_GITHUB_EVENT_ISSUE_TITLE"},
-			expectWarnings: 1,
+			expectChanged:   true,
+			expectRunHas:    []string{"# docs: $GH_AW_GITHUB_EVENT_ISSUE_TITLE", `echo "$GH_AW_GITHUB_EVENT_ISSUE_TITLE"`},
+			expectRunNotHas: []string{"${{ github.event.issue.title }}"},
+			expectEnvKeys:   []string{"GH_AW_GITHUB_EVENT_ISSUE_TITLE"},
+			expectWarnings:  1,
 		},
 		{
 			name: "steps outputs expression extracted",
@@ -529,9 +520,9 @@ func TestSanitizeRunStepExpressions_MultilineRun(t *testing.T) {
 }
 
 // TestSanitizeRunStepExpressions_SanitizedRunHasNoInlineExpressions is a broad
-// property test: after sanitization the non-heredoc portion of the run: field must
-// contain no ${{ }} markers.  (Expressions inside heredoc blocks are intentionally
-// left in place because they are written to files, not executed by the shell.)
+// property test: after sanitization the expandable portion of the run: field must
+// contain no ${{ }} markers. Expressions in quoted heredocs are left for validation
+// because replacing them would change their literal output.
 func TestSanitizeRunStepExpressions_SanitizedRunHasNoInlineExpressions(t *testing.T) {
 	scripts := []string{
 		`echo "${{ github.event.issue.title }}"`,
@@ -548,7 +539,7 @@ func TestSanitizeRunStepExpressions_SanitizedRunHasNoInlineExpressions(t *testin
 			require.True(t, changed, "expected change for script containing expressions")
 			// Only check the non-heredoc portion; heredoc content is intentionally left.
 			sanitizedRun := result["run"].(string)
-			assert.NotContains(t, removeHeredocContent(sanitizedRun), "${{",
+			assert.NotContains(t, shellExpansionContent(sanitizedRun), "${{",
 				"non-heredoc portion of sanitized run field must not contain any ${{ }} markers")
 		})
 	}
@@ -804,65 +795,12 @@ func TestSanitizeRunStepExpressions_ExpressionInQuotedHeredocNotReplaced(t *test
 	assert.Contains(t, runVal, "$GH_AW_GITHUB_EVENT_ISSUE_TITLE",
 		"echo line should reference env var")
 
-	// The quoted heredoc body should still contain the original expression
-	// (the Actions runner expands it before the shell runs; quoted heredoc
-	// prevents variable expansion so we must not replace it there).
+	// The quoted heredoc body remains unchanged so its literal output semantics
+	// are preserved; the compiler's expression guardrail rejects the remaining
+	// unsafe expression.
 	assert.Contains(t, runVal, `${{ github.event.issue.title }}`,
 		"expression inside quoted heredoc must be preserved verbatim")
 
 	assert.Len(t, warnings, 1)
-}
-
-// TestReplaceOutsideQuotedHeredocs_NoHeredoc verifies that without heredocs the
-// function behaves identically to strings.ReplaceAll.
-func TestReplaceOutsideQuotedHeredocs_NoHeredoc(t *testing.T) {
-	s := `echo "${{ github.event.issue.title }}" && echo "${{ github.event.issue.title }}"`
-	result := replaceOutsideQuotedHeredocs(s, "${{ github.event.issue.title }}", "$TITLE")
-	assert.Equal(t, `echo "$TITLE" && echo "$TITLE"`, result)
-}
-
-// TestReplaceOutsideQuotedHeredocs_QuotedHeredocPreserved verifies that quoted
-// heredoc content is left unchanged.
-func TestReplaceOutsideQuotedHeredocs_QuotedHeredocPreserved(t *testing.T) {
-	s := strings.Join([]string{
-		`echo "${{ github.event.issue.title }}"`,
-		`cat > /tmp/f << 'EOF'`,
-		`{"t": "${{ github.event.issue.title }}"}`,
-		`EOF`,
-		`echo done`,
-	}, "\n")
-	result := replaceOutsideQuotedHeredocs(s, "${{ github.event.issue.title }}", "$TITLE")
-
-	// Replacement must happen in echo lines.
-	assert.Contains(t, result, `echo "$TITLE"`)
-	// Replacement must NOT happen inside the quoted heredoc.
-	assert.Contains(t, result, `${{ github.event.issue.title }}`)
-	// Closing EOF line and trailing echo must be intact.
-	assert.Contains(t, result, "echo done")
-}
-
-// TestReplaceOutsideQuotedHeredocs_UnquotedHeredocIsReplaced verifies that
-// unquoted heredoc content (where the shell expands variables) is replaced.
-func TestReplaceOutsideQuotedHeredocs_UnquotedHeredocIsReplaced(t *testing.T) {
-	s := strings.Join([]string{
-		`cat > /tmp/f << EOF`,
-		`{"t": "${{ github.event.issue.title }}"}`,
-		`EOF`,
-	}, "\n")
-	result := replaceOutsideQuotedHeredocs(s, "${{ github.event.issue.title }}", "$TITLE")
-
-	// Unquoted heredoc — replacement is safe because the shell expands $TITLE.
-	assert.NotContains(t, result, "${{ github.event.issue.title }}")
-	assert.Contains(t, result, "$TITLE")
-}
-
-func TestReplaceOutsideQuotedHeredocs_DoesNotReplaceInComments(t *testing.T) {
-	s := strings.Join([]string{
-		`# docs: ${{ github.event.issue.title }}`,
-		`echo "${{ github.event.issue.title }}"`,
-	}, "\n")
-	result := replaceOutsideQuotedHeredocs(s, "${{ github.event.issue.title }}", "$TITLE")
-
-	assert.Contains(t, result, `# docs: ${{ github.event.issue.title }}`)
-	assert.Contains(t, result, `echo "$TITLE"`)
+	assert.Error(t, validateNoGitHubExpressionsInRunScriptsFromParsed(map[string]any{"steps": []any{result}}))
 }

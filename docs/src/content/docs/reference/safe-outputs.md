@@ -57,6 +57,41 @@ be a valid JSON object. Raw Markdown is not valid input for that bare form,
 and `{"body": .}` is not valid JSON. Use only tools and shell operations
 available in the workflow's runtime.
 
+## Output Dependencies
+
+Each recorded safe-output call returns a unique, compact URL-safe `output_id`,
+such as `so_AbCdEf012345`. This identifies the queued operation,
+not a created issue or pull request. It is distinct from `temporary_id` (`aw_…`),
+which remains the mechanism for referencing newly created resources.
+
+For handler-managed safe outputs, `depends-on` is available by default and is
+optional; omit it to run an operation independently. When provided, it accepts
+one `output_id` or a nonempty array of distinct identifiers. All prerequisites
+must complete successfully before the dependent operation runs. For example,
+after a call returns the identifier above:
+
+```json
+{
+  "item_number": 123,
+  "body": "The prerequisite update completed.",
+  "depends-on": "so_AbCdEf012345"
+}
+```
+
+The identifier acknowledges recording, not execution success. If a prerequisite
+fails, its dependents fail without executing, including transitive dependents.
+Skipped, cancelled, staged, deferred, or delegated results do not establish
+success. Missing, ambiguous, or cyclic dependencies also fail closed. Independent
+outputs retain their existing behavior and policy checks.
+
+Dependencies apply within a single safe-output processing pass (and within the
+same Claim in queue workflows). Custom safe jobs, `call_workflow`,
+`push_repo_memory`, `upload_asset`, `noop`, and out-of-band diagnostics
+(`report_incomplete`, `report_missing_tool`, `report_missing_data`) reject
+`depends-on`. The effects of `upload_code_coverage` run in a later job, so
+staging it cannot establish a successful prerequisite. Dependencies do not
+provide rollback for operations that have already succeeded.
+
 ## Available Safe Output Types
 
 The tables below summarize the built-in safe output handlers. `noop`, `report-missing-tool`, and `report-missing-data` are always available, and `create-issue` is auto-injected only when no non-system safe outputs are configured and it is not explicitly disabled.
@@ -1321,6 +1356,14 @@ Authentication uses `SYSTEM_ACCESSTOKEN` when present, otherwise `AZURE_DEVOPS_E
 
 `ado_create_work_item` returns a run-scoped `#aw_...` temporary ID. The other work-item tools accept that ID, and same-run IDs bypass their consuming `target` policy because creation was already scoped by trusted configuration. Numeric IDs are checked against `target`, which accepts `"*"`, a single ID, a list of IDs, or an area-path prefix.
 
+To restrict comments to a work item selected at runtime, set `target` from an expression. The value must evaluate to a positive, safe-integer work-item ID; an empty value is rejected.
+
+```aw wrap
+safe-outputs:
+  ado-comment-on-work-item:
+    target: "${{ inputs.work_item_id }}"
+```
+
 For `ado-update-work-item`, each mutable field must be explicitly enabled. Assignment always rejects the reserved `Agency` and `GitHub Copilot` identities. Attachments must be regular workspace files and are checked for traversal, symbolic links, size, extension, and Azure Pipelines command sequences before upload.
 
 ### No-Op Logging (`noop:`)
@@ -1868,6 +1911,7 @@ safe-outputs:
 | `mcp_policy_error` | MCP server policy violations |
 | `ai_credits_rate_limit_error` | AI credits rate limit exceeded |
 | `max_ai_credits_exceeded` | Maximum AI credits budget exceeded |
+| `activation_failed` | Activation job failed before the agent started, without a named guardrail failure |
 | `cache_miss_misconfiguration` | Cache configuration errors |
 | `code_push_failures` | Failures pushing code to branches |
 | `assignment_errors` | Failures assigning issues or reviewers |
